@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tennis Registration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #eef2f1; --card: #ffffff; --ink: #14302b; --muted: #5d716c;
+    --line: #cfdad7; --court: #1f6f5c; --court-ink: #ffffff;
+    --ball: #e3ec6a; --warn: #b3261e; --wait: #9a6a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1a18; --card: #172623; --ink: #e6f0ed; --muted: #93a8a2;
+      --line: #2b403c; --court: #4fb89f; --court-ink: #0f1a18;
+      --ball: #e3ec6a; --warn: #ff8a80; --wait: #f0c36a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Sarabun", system-ui, sans-serif; font-size: 17px; line-height: 1.5;
+  }
+  main { max-width: 480px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 24px; margin: 8px 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input[type=text] {
+    width: 100%; padding: 12px; font: inherit; color: inherit; background: transparent;
+    border: 1px solid var(--line); border-radius: 10px;
+  }
+  input[readonly] { background: var(--bg); }
+  .hint { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
+  .courts { display: grid; gap: 10px; margin: 18px 0; }
+  .court {
+    text-align: left; padding: 14px; font: inherit; color: inherit; cursor: pointer;
+    background: transparent; border: 2px solid var(--line); border-radius: 12px;
+  }
+  .court[aria-pressed=true] { border-color: var(--court); background: color-mix(in srgb, var(--court) 12%, transparent); font-weight: 600; }
+  button.primary, button.secondary, button.danger {
+    width: 100%; padding: 14px; font: inherit; font-weight: 600; border-radius: 12px; cursor: pointer; margin-top: 10px;
+  }
+  button.primary { background: var(--court); color: var(--court-ink); border: 0; }
+  button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  button.danger { background: transparent; color: var(--warn); border: 1px solid var(--warn); }
+  button:disabled { opacity: .5; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--ball); outline-offset: 2px; }
+  .badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-weight: 700; }
+  .badge.ok { background: var(--ball); color: #14302b; }
+  .badge.wait { background: transparent; color: var(--wait); border: 2px solid var(--wait); }
+  .big { font-size: 22px; font-weight: 700; margin: 10px 0 2px; }
+  #msg { min-height: 24px; margin: 0 0 12px; font-weight: 600; }
+  #msg.err { color: var(--warn); }
+  .link { background: none; border: 0; color: var(--muted); text-decoration: underline; font: inherit; cursor: pointer; padding: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tennis registration</h1>
+  <p class="sub">One LINE account, one name, one court per round.</p>
+  <p id="msg" role="status" aria-live="polite"></p>
+  <div id="view" class="card">Loading…</div>
+  <button class="link" id="refresh" hidden>Refresh status</button>
+</main>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+  const LIFF_ID = '2012057325-NcSy40uj';
+  const API_URL = 'https://script.google.com/macros/s/AKfycbyP4NKoHhUlNjgQJNU9ScWjpKYRfzpmnD0z7QFrPRAIz9oXDOWZgJe0i47QUb9Bp98k/exec';
+
+  const view = document.getElementById('view');
+  const msg = document.getElementById('msg');
+  const refreshBtn = document.getElementById('refresh');
+  let selectedCourt = null;
+  let busy = false;
+
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  function say(text, isError) {
+    msg.textContent = text || '';
+    msg.className = isError ? 'err' : '';
+  }
+
+  // Send one command to Apps Script, with the LINE ID token attached
+  async function api(action, extra) {
+    const res = await fetch(API_URL, {
+      method: 'POST', // no custom headers on purpose, so the browser sends a simple request
+      body: JSON.stringify({ idToken: liff.getIDToken(), action, ...extra })
+    });
+    const data = await res.json();
+    if (!data.ok && /Login expired/.test(data.message || '')) {
+      liff.logout();
+      liff.login();
+    }
+    return data;
+  }
+
+  async function load() {
+    refreshBtn.hidden = false;
+    const s = await api('status');
+    if (!s.ok) { say(s.message, true); view.textContent = 'Could not load your status.'; return; }
+    s.registered ? renderRegistered(s) : renderForm(s);
+  }
+
+  function renderForm(s) {
+    if (!selectedCourt || !s.courts.includes(selectedCourt)) selectedCourt = null;
+    const bound = s.boundName;
+    view.innerHTML = `
+      <label for="name">Your name</label>
+      <input type="text" id="name" autocomplete="off" autocapitalize="words"
+        ${bound ? `value="${esc(bound)}" readonly` : 'placeholder="Somchai K"'}>
+      <p class="hint">${bound
+        ? 'This name is linked to your LINE account.'
+        : 'First name + first letter of your surname, in English. It will be linked to this LINE account.'}</p>
+      <div class="courts" role="group" aria-label="Choose a court">
+        ${s.courts.map(c => `<button class="court" data-court="${esc(c)}" aria-pressed="${c === selectedCourt}">${esc(c)}</button>`).join('')}
+      </div>
+      <button class="primary" id="go" disabled>Choose a court</button>`;
+    const go = document.getElementById('go');
+    const sync = () => {
+      go.disabled = !selectedCourt;
+      go.textContent = selectedCourt ? 'Register for ' + selectedCourt : 'Choose a court';
+      view.querySelectorAll('.court').forEach(b => b.setAttribute('aria-pressed', b.dataset.court === selectedCourt));
+    };
+    view.querySelectorAll('.court').forEach(b => b.onclick = () => { selectedCourt = b.dataset.court; sync(); });
+    go.onclick = () => run(() => api('register', { name: document.getElementById('name').value, court: selectedCourt }));
+    sync();
+  }
+
+  function renderRegistered(s) {
+    const confirmed = s.status === 'Confirmed';
+    const other = s.courts.find(c => c !== s.court);
+    view.innerHTML = `
+      <div>${esc(s.name)}</div>
+      <div class="big">${esc(s.court)}</div>
+      <span class="badge ${confirmed ? 'ok' : 'wait'}">${confirmed ? 'Confirmed' : 'Waitlist #' + s.waitPos}</span>
+      <p class="hint">${confirmed
+        ? 'You have a spot. If someone ahead of you cancels, nothing changes for you.'
+        : 'You move up automatically when a spot opens. Check back here or in the group.'}</p>
+      <button class="secondary" id="move">Move to ${esc(other)}</button>
+      <p class="hint">Moving counts as a new registration: you go to the back of that court’s queue.</p>
+      <button class="danger" id="cancel">Cancel my registration</button>`;
+    document.getElementById('move').onclick = () => {
+      if (confirm('Move to ' + other + '? You will go to the back of that queue.')) run(() => api('changeCourt', { court: other }));
+    };
+    document.getElementById('cancel').onclick = () => {
+      if (confirm('Cancel your registration for this round?')) run(() => api('cancel'));
+    };
+  }
+
+  async function run(fn) {
+    if (busy) return;
+    busy = true; say('Working…');
+    view.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+      const r = await fn();
+      say(r.message, !r.ok);
+    } catch (e) {
+      say('Network problem. Check your connection and try again.', true);
+    }
+    busy = false;
+    await load();
+  }
+
+  refreshBtn.onclick = () => { say(''); load(); };
+
+  (async () => {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login(); return; }
+      await load();
+    } catch (e) {
+      view.textContent = 'Could not start. Please close this page and open the link again.';
+    }
+  })();
+</script>
+</body>
+</html>
