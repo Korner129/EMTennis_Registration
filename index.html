@@ -136,7 +136,9 @@
   function renderForm(s) {
     if (!selectedCourt || !s.courts.includes(selectedCourt)) selectedCourt = null;
     const bound = s.boundName;
+    const isOpen = !s.window || s.window.isOpen;
     view.innerHTML = `
+      ${s.window ? `<p class="hint" style="margin:0 0 14px"><strong>${esc(s.window.message)}</strong></p>` : ''}
       <label for="name">Your name</label>
       <input type="text" id="name" autocomplete="off" autocapitalize="words"
         ${bound ? `value="${esc(bound)}" readonly` : 'placeholder="Somchai K"'}>
@@ -149,7 +151,7 @@
       <button class="primary" id="go" disabled>Choose a court</button>`;
     const go = document.getElementById('go');
     const sync = () => {
-      go.disabled = !selectedCourt;
+      go.disabled = !selectedCourt || !isOpen;
       go.textContent = selectedCourt ? 'Register for ' + selectedCourt : 'Choose a court';
       view.querySelectorAll('.court').forEach(b => b.setAttribute('aria-pressed', b.dataset.court === selectedCourt));
     };
